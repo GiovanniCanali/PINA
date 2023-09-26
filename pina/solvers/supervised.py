@@ -1,4 +1,4 @@
-""" Module for PINN """
+""" Module for SupervisedSolver """
 import torch
 try:
     from torch.optim.lr_scheduler import LRScheduler  # torch >= 2.0
@@ -14,21 +14,10 @@ from ..loss import LossInterface
 from torch.nn.modules.loss import _Loss
 
 
-torch.pi = torch.acos(torch.zeros(1)).item() * 2  # which is 3.1415927410125732
-
-
-class PINN(SolverInterface):
+class SupervisedSolver(SolverInterface):
     """
-    PINN solver class. This class implements Physics Informed Neural 
-    Network solvers, using a user specified ``model`` to solve a specific
-    ``problem``. 
-
-    .. seealso::
-
-        **Original reference**: Karniadakis, G. E., Kevrekidis, I. G., Lu, L., 
-        Perdikaris, P., Wang, S., & Yang, L. (2021). 
-        Physics-informed machine learning. Nature Reviews Physics, 3(6), 422-440.
-        <https://doi.org/10.1038/s42254-021-00314-5>`_.
+    SupervisedSolver solver class. This class implements a SupervisedSolver,
+    using a user specified ``model`` to solve a specific ``problem``. 
     """
     def __init__(self,
                  problem,
@@ -73,11 +62,10 @@ class PINN(SolverInterface):
 
 
     def forward(self, x):
-        """Forward pass implementation for the PINN
-           solver.
+        """Forward pass implementation for the solver.
 
         :param torch.tensor x: Input data. 
-        :return: PINN solution.
+        :return: Solver solution.
         :rtype: torch.tensor
         """
         # extract labels
@@ -89,8 +77,7 @@ class PINN(SolverInterface):
         return output
 
     def configure_optimizers(self):
-        """Optimizer configuration for the PINN
-           solver.
+        """Optimizer configuration for the solver.
 
         :return: The optimizers and the schedulers
         :rtype: tuple(list, list)
@@ -98,7 +85,7 @@ class PINN(SolverInterface):
         return self.optimizers, [self.scheduler]
     
     def training_step(self, batch, batch_idx):
-        """PINN solver training step.
+        """Solver training step.
 
         :param batch: The batch element in the dataloader.
         :type batch: tuple
@@ -108,54 +95,40 @@ class PINN(SolverInterface):
         :rtype: LabelTensor
         """
 
-        condition_losses = []
-        condition_names = []
-
         for condition_name, samples in batch.items():
 
             if condition_name not in self.problem.conditions:
                 raise RuntimeError('Something wrong happened.')
 
-            condition_names.append(condition_name)
             condition = self.problem.conditions[condition_name]
 
-            # PINN loss: equation evaluated on location or input_points
-            if hasattr(condition, 'equation'):
-                target = condition.equation.residual(samples, self.forward(samples))
-                loss = self.loss(torch.zeros_like(target), target)
-            # PINN loss: evaluate model(input_points) vs output_points
-            elif hasattr(condition, 'output_points'):
+            # data loss
+            if hasattr(condition, 'output_points'):
                 input_pts, output_pts = samples
-                loss = self.loss(self.forward(input_pts), output_pts)
+                loss = self.loss(self.forward(input_pts), output_pts) * condition.data_weight
+            else:
+                raise RuntimeError('Supervised solver works only in data-driven mode.')
 
-            condition_losses.append(loss * condition.data_weight)
-
-        # TODO Fix the bug, tot_loss is a label tensor without labels
-        # we need to pass it as a torch tensor to make everything work
-        total_loss = sum(condition_losses)
-
-        self.log('mean_loss', float(total_loss / len(condition_losses)), prog_bar=True, logger=True)
-        for condition_loss, loss in zip(condition_names, condition_losses):
-            self.log(condition_loss + '_loss', float(loss), prog_bar=True, logger=True)
-        return total_loss
+        self.log('mean_loss', float(loss), prog_bar=True, logger=True)
+        return loss
 
     @property
     def scheduler(self):
         """
-        Scheduler for the PINN training.
+        Scheduler for training.
         """
         return self._scheduler
     
     @property
     def neural_net(self):
         """
-        Neural network for the PINN training.
+        Neural network for training.
         """
         return self._neural_net
     
     @property
     def loss(self):
         """
-        Loss for the PINN training.
+        Loss for training.
         """
         return self._loss
