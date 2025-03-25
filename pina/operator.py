@@ -201,7 +201,7 @@ def laplacian(output_, input_, components=None, d=None, method="std"):
         :rtype: LabelTensor
         """
 
-        grad_output = grad(output_, input_, components=components, d=d)
+        grad_output = grad(output_, input_, components=[components], d=d)
         result = torch.zeros(output_.shape[0], 1, device=output_.device)
 
         for i, label in enumerate(grad_output.labels):
