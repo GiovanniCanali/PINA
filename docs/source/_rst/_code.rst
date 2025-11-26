@@ -108,6 +108,7 @@ Models
     PirateNet <model/pirate_network.rst>
     EquivariantGraphNeuralOperator <model/equivariant_graph_neural_operator.rst>
     SINDy <model/sindy.rst>
+    CoupledNetwork <model/coupled_network.rst>
 
 Blocks
 -------------
@@ -126,6 +127,7 @@ Blocks
     Continuous Convolution Block <model/block/convolution.rst>
     Orthogonal Block <model/block/orthogonal.rst>
     PirateNet Block <model/block/pirate_network_block.rst>
+    CoupledNetwork Block <model/block/coupled_network_block.rst>
 
 Message Passing
 -------------------

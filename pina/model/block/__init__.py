@@ -19,6 +19,7 @@ __all__ = [
     "RBFBlock",
     "GNOBlock",
     "PirateNetBlock",
+    "CoupledNetworkBlock",
 ]
 
 from .convolution_2d import ContinuousConvBlock
@@ -37,3 +38,4 @@ from .low_rank_block import LowRankBlock
 from .rbf_block import RBFBlock
 from .gno_block import GNOBlock
 from .pirate_network_block import PirateNetBlock
+from .coupled_network_block import CoupledNetworkBlock

@@ -16,6 +16,7 @@ __all__ = [
     "PirateNet",
     "EquivariantGraphNeuralOperator",
     "SINDy",
+    "CoupledNetwork",
 ]
 
 from .feed_forward import FeedForward, ResidualFeedForward
@@ -31,3 +32,4 @@ from .graph_neural_operator import GraphNeuralOperator
 from .pirate_network import PirateNet
 from .equivariant_graph_neural_operator import EquivariantGraphNeuralOperator
 from .sindy import SINDy
+from .coupled_network import CoupledNetwork
