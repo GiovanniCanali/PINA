@@ -53,7 +53,7 @@ def test_input_pts():
     n = 10
     poisson_problem = Poisson()
     poisson_problem.discretise_domain(n, "grid")
-    assert sorted(list(poisson_problem.input_pts.keys())) == sorted(
+    assert sorted(list(poisson_problem.collected_data.keys())) == sorted(
         list(poisson_problem.conditions.keys())
     )
 

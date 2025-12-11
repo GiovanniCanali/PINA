@@ -76,22 +76,6 @@ class AbstractProblem(metaclass=ABCMeta):
             )
         return self._collected_data
 
-    #  back compatibility 0.1
-    @property
-    def input_pts(self):
-        """
-        Return a dictionary mapping condition names to their corresponding
-        input points. If some domains are not sampled, they will not be returned
-        and the corresponding condition will be empty.
-
-        :return: The input points of the problem.
-        :rtype: dict
-        """
-        to_return = {}
-        for cond_name, data in self.collected_data.items():
-            to_return[cond_name] = data["input"]
-        return to_return
-
     @property
     def discretised_domains(self):
         """
@@ -149,16 +133,6 @@ class AbstractProblem(metaclass=ABCMeta):
             variables += self.parameters
 
         return variables
-
-    @input_variables.setter
-    def input_variables(self, variables):
-        """
-        Set the input variables of the AbstractProblem.
-
-        :param list[str] variables: The input variables of the problem.
-        :raises RuntimeError: Not implemented.
-        """
-        raise RuntimeError
 
     @property
     @abstractmethod

@@ -42,7 +42,7 @@ def test_sample(condition_to_update):
         max_epochs=5,
     )
     before_n_points = {
-        loc: len(trainer.solver.problem.input_pts[loc])
+        loc: len(trainer.solver.problem.collected_data[loc]["input"])
         for loc in condition_to_update
     }
     trainer.train()

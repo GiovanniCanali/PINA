@@ -150,8 +150,10 @@ class SelfAdaptivePINN(PINNInterface, MultiSolverInterface):
 
         # Define a ModuleDict for the weights
         weights = {}
-        for cond, data in problem.input_pts.items():
-            weights[cond] = Weights(func=weight_function, num_points=len(data))
+        for cond, data in problem.collected_data.items():
+            weights[cond] = Weights(
+                func=weight_function, num_points=len(data["input"])
+            )
         weights = torch.nn.ModuleDict(weights)
 
         super().__init__(
@@ -351,7 +353,7 @@ class SelfAdaptivePINN(PINNInterface, MultiSolverInterface):
                 batch_idx * len_res,
                 (batch_idx + 1) * len_res,
                 device=res.device,
-            ) % len(self.problem.input_pts[cond])
+            ) % len(self.problem.collected_data[cond]["input"])
 
             # Apply the weights to the residuals
             losses[cond] = self._apply_reduction(

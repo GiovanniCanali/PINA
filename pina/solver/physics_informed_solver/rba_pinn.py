@@ -129,8 +129,10 @@ class RBAPINN(PINN):
 
         # Initialize the weight of each point to 0
         self.weights = {}
-        for cond, data in self.problem.input_pts.items():
-            buffer_tensor = torch.zeros((len(data), 1), device=self.device)
+        for cond, data in self.problem.collected_data.items():
+            buffer_tensor = torch.zeros(
+                (len(data["input"]), 1), device=self.device
+            )
             self.register_buffer(f"weight_{cond}", buffer_tensor)
             self.weights[cond] = getattr(self, f"weight_{cond}")
 
@@ -146,7 +148,7 @@ class RBAPINN(PINN):
         are moved to the correct computation device.
         """
         # Move all weight buffers to the correct device
-        for cond in self.problem.input_pts:
+        for cond in self.problem.collected_data.keys():
 
             # Get the buffer for the current condition
             weight_buf = getattr(self, f"weight_{cond}")
@@ -251,7 +253,7 @@ class RBAPINN(PINN):
                 batch_idx * len_res,
                 (batch_idx + 1) * len_res,
                 device=self.weights[cond].device,
-            ) % len(self.problem.input_pts[cond])
+            ) % len(self.problem.collected_data[cond]["input"])
 
             losses[cond] = self._apply_reduction(
                 loss=(res * self.weights[cond][idx])
@@ -296,7 +298,7 @@ class RBAPINN(PINN):
                 batch_idx * len_pts,
                 (batch_idx + 1) * len_pts,
                 device=self.weights[cond].device,
-            ) % len(self.problem.input_pts[cond])
+            ) % len(self.problem.collected_data[cond]["input"])
 
             # Update weights
             weights = self.weights[cond]
