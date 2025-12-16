@@ -49,7 +49,7 @@ class Equation(EquationInterface):
             2 (direct problem) or 3 (inverse problem).
         """
         # Move the equation to the input_ device
-        self.to(input_.device)
+        # self.to(input_.device)
 
         # Call the underlying equation based on its signature length
         if self.__len_sig == 2:
