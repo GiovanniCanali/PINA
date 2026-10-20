@@ -1,5 +1,6 @@
 import torch
 import pytest
+import random
 from pina.model import VectorizedSpline, Spline
 from pina.operator import grad
 from pina import LabelTensor
@@ -284,3 +285,87 @@ def test_1d_vs_vectorized():
 
     assert out_vectorized.shape == out_spline.shape
     assert torch.allclose(out_vectorized, out_spline, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("args", valid_args)
+@pytest.mark.parametrize("aggregate_output", ["mean", "sum", None])
+@pytest.mark.parametrize("insertion_ndim", [1, 2])
+def test_refine(args, aggregate_output, insertion_ndim):
+
+    # Define the model and use double precision for geometry comparisons
+    model = VectorizedSpline(**args, aggregate_output=aggregate_output).double()
+
+    # Store the knots, control points, and order for comparison
+    knots = model.knots.clone()
+    ctrl = model.control_points.detach().clone()
+    order = model.order
+
+    # Define the number of splines and new knots to insert
+    n_splines, n_new = knots.shape[0], random.randint(2, 4)
+
+    def find_new_knots(knot_vector, count):
+        """
+        Generate `count` new knot values that lie strictly inside the interval
+        defined by the first and last elements of `knot_vector`.
+        """
+        span = knot_vector[1:] - knot_vector[:-1]
+        idx = span.argmax()
+        left = knot_vector[idx]
+        right = knot_vector[idx + 1]
+        assert right > left
+
+        # Strictly interior, equally spaced values
+        fractions = torch.arange(
+            1,
+            count + 1,
+            dtype=knot_vector.dtype,
+            device=knot_vector.device,
+        ) / (count + 1)
+        return left + fractions * (right - left)
+
+    # Shared insertion values
+    if insertion_ndim == 1:
+
+        # Find bounds for the common interior span across all splines
+        left, right = knots[:, 0].max(), knots[:, -1].min()
+
+        # Using the union avoids existing knots in any spline
+        common = knots[(knots >= left) & (knots <= right)].unique(sorted=True)
+
+        # Find new knots that lie strictly inside the common span
+        inserted = find_new_knots(common, n_new)
+
+    # Different insertion values for each spline
+    else:
+        inserted = torch.stack([find_new_knots(row, n_new) for row in knots])
+
+    # Sample the full knot interval, including both boundaries
+    t = torch.linspace(0, 1, 201, dtype=knots.dtype).unsqueeze(1)
+    x = knots[:, 0] + t * (knots[:, -1] - knots[:, 0])
+
+    # Evaluate the model's output before and after refinement
+    with torch.no_grad():
+        before = model(x)
+        model.refine(inserted)
+        after = model(x)
+
+    # Order and output shape remain unchanged
+    assert model.order == order
+    assert after.shape == before.shape
+
+    # Each insertion adds one knot and one control point per spline
+    assert model.knots.shape == (n_splines, knots.shape[-1] + n_new)
+    assert model.control_points.shape == (
+        n_splines,
+        ctrl.shape[1],
+        ctrl.shape[-1] + n_new,
+    )
+
+    # The refined knot vectors contain exactly the requested insertions
+    if insertion_ndim == 1:
+        inserted = inserted.unsqueeze(0).expand(n_splines, -1)
+    expected_knots = torch.cat((knots, inserted), dim=-1).sort(dim=-1).values
+    torch.testing.assert_close(model.knots, expected_knots)
+
+    # Refinement preserves the represented geometry
+    torch.testing.assert_close(after, before, atol=1e-10, rtol=1e-10)

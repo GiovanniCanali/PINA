@@ -505,6 +505,134 @@ class VectorizedSpline(torch.nn.Module):
 
         return derivatives[self.order]
 
+    @torch.no_grad()
+    def refine(self, knots):
+        """
+        Perform h-refinement by inserting knots without changing the geometry.
+        The spline order and polynomial degree remain unchanged, while the
+        number of control points increases by one for each insertion.
+
+        :param torch.Tensor knots: A tensor [n_new] of shared insertion values,
+            or [s, n_new] with one row per spline. Every spline receives the
+            same number of knots, but insertion locations may differ.
+            Values must lie strictly between the first and last existing knots.
+            Repeated values are allowed up to a total multiplicity of order.
+        :raises ValueError: For invalid shapes, values, or knot multiplicities.
+        """
+        # Compute the new knots and control points for the given insertion knots
+        new_knots, new_ctrl = self._h_refinement_data(
+            knots, self.control_points
+        )
+
+        # Check whether the control points required gradients
+        requires_grad = self.control_points.requires_grad
+
+        # Update the spline in place with the new knots and control points
+        self.knots = new_knots
+        self.control_points = new_ctrl
+
+        # Restore the requires_grad property of the control points
+        self.control_points.requires_grad_(requires_grad)
+
+    @torch.no_grad()
+    def _h_refinement_data(self, insertion, ctrl):
+        """
+        Return refined knots and control points for the given insertion knots.
+
+        :param torch.Tensor insertion: A tensor [n_new] of shared insertion
+            values, or [s, n_new] with one row per spline. Every spline receives
+            the same number of knots, but insertion locations may differ.
+            Values must lie strictly between the first and last existing knots.
+            Repeated values are allowed up to a total multiplicity of order.
+        :param torch.Tensor ctrl: The control points of the spline.
+        :raises ValueError: For invalid shapes, values, or knot multiplicities.
+        :return: A tuple (knots, control_points) of the refined knots and
+            control points.
+        :rtype: tuple[torch.Tensor, torch.Tensor]
+        """
+        # Check consistency of the insertion knots
+        check_consistency(insertion, torch.Tensor)
+        if insertion.ndim not in (1, 2):
+            raise ValueError(
+                "Inserted knots must have shape [n_new] or [n_splines, n_new]. "
+                f"Got {insertion.shape}."
+            )
+
+        # Normalize to shape [n_splines, n_new]
+        if insertion.ndim == 1:
+            insertion = insertion.unsqueeze(0).expand(self.knots.shape[0], -1)
+        elif insertion.shape[0] != self.knots.shape[0]:
+            raise ValueError(
+                "The first dimension of inserted knots must be equal to the "
+                f"number of splines. Got {insertion.shape[0]}, expected "
+                f"{self.knots.shape[0]}."
+            )
+
+        # Extract the old knots, the old control points, and the degree
+        knots = self.knots.detach()
+        ctrl = ctrl.detach()
+        degree = self.order - 1
+
+        # Move the insertion knots to the same device and type as the old ones
+        insertion = insertion.to(device=knots.device, dtype=knots.dtype)
+
+        # Check that the insertion knots lie inside the existing knot interval
+        inside = (insertion > knots[:, :1]) & (insertion < knots[:, -1:])
+        if (inside == False).any():
+            raise ValueError(
+                "Insertions must lie strictly inside each knot interval."
+            )
+
+        # Iterate over the new knots in sorted order, inserting one at a time
+        for new_knot in insertion.sort(dim=-1).values.unbind(dim=1):
+
+            # Check that the insertion does not exceed the maximum multiplicity
+            knot_multiplicity = (knots == new_knot[:, None]).sum(dim=1)
+            if (knot_multiplicity >= self.order).any():
+                raise ValueError(
+                    "Insertion would make knot multiplicity exceed order."
+                )
+
+            # Find the 0-based index of the first knot greater than the new knot
+            k = (
+                torch.searchsorted(
+                    knots.contiguous(),
+                    new_knot[:, None].contiguous(),
+                    right=True,
+                )
+                - 1
+            )
+
+            # Indices of the n_ctrl + 1 new control points
+            n_ctrl = ctrl.shape[-1]
+            i = torch.arange(n_ctrl + 1, device=knots.device)[None, :]
+
+            # Compute weights from the pre-insertion knot vector
+            left_knots = knots[:, : n_ctrl + 1]
+            right_knots = knots[:, degree : degree + n_ctrl + 1]
+            denominator = right_knots - left_knots
+            safe_denominator = torch.where(
+                denominator != 0, denominator, torch.ones_like(denominator)
+            )
+
+            # Compute the linear interpolation weights for each new ctrl point
+            alpha = (new_knot[:, None] - left_knots) / safe_denominator
+            alpha = torch.where(i <= k - degree, torch.ones_like(alpha), alpha)
+            alpha = torch.where(i > k, torch.zeros_like(alpha), alpha)
+            alpha = alpha.to(dtype=ctrl.dtype).unsqueeze(1)
+
+            # Compute the new control points as a combination of the old ones
+            zero = ctrl.new_zeros(ctrl.shape[0], ctrl.shape[1], 1)
+            current = torch.cat((ctrl, zero), dim=-1)
+            previous = torch.cat((zero, ctrl), dim=-1)
+            ctrl = alpha * current + (1 - alpha) * previous
+
+            # Insert the new knot into each spline's knot vector
+            knots = torch.cat((knots, new_knot[:, None]), dim=1)
+            knots = knots.sort(dim=-1).values
+
+        return knots, ctrl
+
     @property
     def control_points(self):
         """

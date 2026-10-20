@@ -198,6 +198,56 @@ class SplineSurface(torch.nn.Module):
 
         return ddu + ddv
 
+    @torch.no_grad()
+    def refine(self, knots, axis):
+        """
+        Perform h-refinement by inserting knots along one surface axis without
+        changing the geometry. The spline surface order and polynomial degree
+        remain unchanged along the selected axis, while the number of control
+        points increases by one for each insertion.
+
+        :param torch.Tensor knots: A one-dimensional tensor of knots to insert
+            along the selected ``axis``. Values must be strictly inside the
+            selected knot interval; repeated values are allowed up to
+            multiplicity order.
+        :param str axis: The parametric axis along which to insert
+            knots, either ``u`` or ``v``.
+        :raises ValueError: For an invalid axis or insertion tensor.
+        """
+        # Check consistency
+        if axis not in ("u", "v"):
+            raise ValueError("The axis must be either 'u' or 'v'.")
+        if knots.ndim != 1:
+            raise ValueError(
+                "The knots to insert must be a one-dimensional tensor of shape "
+                f"[n_new]. Got {knots.shape}."
+            )
+
+        # Retrieve the spline axis to refine
+        spline = self.spline_u if axis == "u" else self.spline_v
+
+        # Transpose ctrl for u-axis refinement to match expected shape
+        ctrl = self.control_points.T if axis == "u" else self.control_points
+
+        # Compute the new knots and control points for the given insertion knots
+        ctrl = ctrl.unsqueeze(0)
+        new_knots, new_ctrl = spline._h_refinement_data(knots, ctrl)
+        new_ctrl = new_ctrl[0]
+
+        # Transpose back for u-axis refinement
+        if axis == "u":
+            new_ctrl = new_ctrl.T
+
+        # Check whether the control points required gradients
+        requires_grad = self.control_points.requires_grad
+
+        # Update the spline in place with the new knots and control points
+        spline.knots = new_knots
+
+        # Restore the requires_grad property of the control points
+        self.control_points = new_ctrl.contiguous()
+        self.control_points.requires_grad_(requires_grad)
+
     @property
     def knots(self):
         """
