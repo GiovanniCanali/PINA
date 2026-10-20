@@ -125,10 +125,11 @@ class SplineSurface(torch.nn.Module):
         :return: The output tensor.
         :rtype: torch.Tensor
         """
+        x = x.as_subclass(torch.Tensor)
         return torch.einsum(
-            "...bi, ...bj, ij -> ...b",
-            self.spline_u.basis(x.as_subclass(torch.Tensor)[..., 0]),
-            self.spline_v.basis(x.as_subclass(torch.Tensor)[..., 1]),
+            "...i, ...j, ij -> ...",
+            self.spline_u.basis(x[..., 0:1])[..., 0, :],
+            self.spline_v.basis(x[..., 1:2])[..., 0, :],
             self.control_points,
         ).unsqueeze(-1)
 
@@ -156,16 +157,16 @@ class SplineSurface(torch.nn.Module):
             u = x[x.labels[0]].as_subclass(torch.Tensor)
             v = x[x.labels[1]].as_subclass(torch.Tensor)
         else:
-            u = x[..., 0]
-            v = x[..., 1]
+            u = x[..., 0:1]
+            v = x[..., 1:2]
 
         # Compute basis derivatives
-        der_u = self.spline_u._basis_derivative(u, degree=degree_u)
-        der_v = self.spline_v._basis_derivative(v, degree=degree_v)
+        der_u = self.spline_u._basis_derivative(u, degree=degree_u)[..., 0, :]
+        der_v = self.spline_v._basis_derivative(v, degree=degree_v)[..., 0, :]
 
         return torch.einsum(
-            "...bi, ...bj, ij -> ...b", der_u, der_v, self.control_points
-        )
+            "...i, ...j, ij -> ...", der_u, der_v, self.control_points
+        ).unsqueeze(-1)
 
     def gradient(self, x):
         """
@@ -205,7 +206,7 @@ class SplineSurface(torch.nn.Module):
         :return: The knots.
         :rtype: tuple(torch.Tensor, torch.Tensor)
         """
-        return self.spline_u.knots, self.spline_v.knots
+        return self.spline_u.knots[0], self.spline_v.knots[0]
 
     @knots.setter
     def knots(self, value):
@@ -251,8 +252,8 @@ class SplineSurface(torch.nn.Module):
         """
         # Save correct shape of control points
         __valid_shape = (
-            len(self.spline_u.knots) - self.spline_u.order,
-            len(self.spline_v.knots) - self.spline_v.order,
+            self.spline_u.knots.shape[-1] - self.spline_u.order,
+            self.spline_v.knots.shape[-1] - self.spline_v.order,
         )
 
         # If control points are not provided, initialize them
@@ -260,14 +261,14 @@ class SplineSurface(torch.nn.Module):
 
             # Check that there are enough knots to define control points
             if (
-                len(self.spline_u.knots) < self.spline_u.order + 1
-                or len(self.spline_v.knots) < self.spline_v.order + 1
+                self.spline_u.knots.shape[-1] < self.spline_u.order + 1
+                or self.spline_v.knots.shape[-1] < self.spline_v.order + 1
             ):
                 raise ValueError(
                     f"Not enough knots to define control points. Got "
-                    f"{len(self.spline_u.knots)} knots along u and "
-                    f"{len(self.spline_v.knots)} knots along v, but need at "
-                    f"least {self.spline_u.order + 1} and "
+                    f"{self.spline_u.knots.shape[-1]} knots along u and "
+                    f"{self.spline_v.knots.shape[-1]} knots along v, but need "
+                    f"at least {self.spline_u.order + 1} and "
                     f"{self.spline_v.order + 1}, respectively."
                 )
 

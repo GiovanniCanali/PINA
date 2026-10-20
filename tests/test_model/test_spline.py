@@ -22,8 +22,8 @@ def check_scipy_spline(model, x, output_):
 
     # Define scipy spline
     scipy_spline = BSpline(
-        t=model.knots.detach().numpy(),
-        c=model.control_points.detach().numpy(),
+        t=model.knots.squeeze().detach().numpy(),
+        c=model.control_points.squeeze().detach().numpy(),
         k=model.order - 1,
     )
 

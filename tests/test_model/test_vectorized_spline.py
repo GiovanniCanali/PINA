@@ -4,7 +4,6 @@ from pina.model import VectorizedSpline, Spline
 from pina.operator import grad
 from pina import LabelTensor
 
-
 # Utility quantities for testing
 order = torch.randint(3, 6, (1,)).item()
 n_ctrl_pts = torch.randint(order, order + 5, (1,)).item()

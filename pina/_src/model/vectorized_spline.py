@@ -44,7 +44,8 @@ class VectorizedSpline(torch.nn.Module):
 
     The full vector spline evaluates all univariate splines in parallel. If each
     univariate spline has output dimension :math:`o`, then before optional
-    aggregation the output has shape ``[batch, s, o]``.
+    aggregation the output has shape ``[..., batch, s, o]``. Arbitrary leading
+    batch dimensions are preserved.
 
     .. note::
 
@@ -129,11 +130,11 @@ class VectorizedSpline(torch.nn.Module):
             parameters with zero initial value. Default is None.
         :param str aggregate_output: If None, the output of each univariate
             spline is returned separately, resulting in an output of shape
-            ``[batch, s, o]``, where ``s`` is the number of univariate splines
-            and ``o`` is the output dimension of each univariate spline. If set
-            to ``"mean"`` or ``"sum"``, the output is aggregated accordingly
-            across the last dimension, resulting in an output of shape
-            ``[batch, s]``. Default is None.
+            ``[..., batch, s, o]``, where ``s`` is the number of univariate
+            splines and ``o`` is the output dimension of each univariate spline.
+            If set to ``"mean"`` or ``"sum"``, the output is aggregated
+            accordingly across the last dimension, resulting in an output of
+            shape ``[..., batch, s]``. Default is None.
         :raises AssertionError: If ``order`` is not a positive integer.
         :raises ValueError: If ``knots`` is neither a torch.Tensor nor a
             dictionary, when provided.
@@ -294,7 +295,7 @@ class VectorizedSpline(torch.nn.Module):
         :param bool collection: If True, returns a list of basis functions for
             all orders up to the spline order. Default is False.
         :raises ValueError: If ``collection`` is not a boolean.
-        :raises ValueError: If ``x`` is not two-dimensional.
+        :raises ValueError: If ``x`` has fewer than two dimensions.
         :raises ValueError: If the number of input features does not match
             the number of univariate splines.
         :return: The basis functions evaluated at x.
@@ -306,17 +307,17 @@ class VectorizedSpline(torch.nn.Module):
         # Ensure x is a tensor of the same dtype as knots
         x = x.as_subclass(torch.Tensor).to(dtype=self.knots.dtype)
 
-        # Raise error if x does not have shape (batch, s)
-        if x.ndim != 2:
+        # Raise error if x does not have shape (..., batch, s)
+        if x.ndim < 2:
             raise ValueError(
-                f"The input must have shape (batch, s). Got {x.shape}."
+                f"The input must have shape (..., batch, s). Got {x.shape}."
             )
 
         # Raise error if x has different number of splines than knots
-        if x.shape[1] != self.knots.shape[0]:
+        if x.shape[-1] != self.knots.shape[0]:
             raise ValueError(
                 f"The number of input features must be the same as the number"
-                f" of univariate splines. Got {x.shape[1]} input features,"
+                f" of univariate splines. Got {x.shape[-1]} input features,"
                 f" but {self.knots.shape[0]} univariate splines."
             )
 
@@ -342,10 +343,15 @@ class VectorizedSpline(torch.nn.Module):
             x.squeeze(-1), knot_right.unsqueeze(0), rtol=1e-8, atol=1e-10
         )
 
-        # Ensure the correct value is set at the rightmost boundary
-        if torch.any(at_rightmost_boundary):
-            b_idx, s_idx = torch.nonzero(at_rightmost_boundary, as_tuple=True)
-            basis[b_idx, s_idx, self._boundary_interval_idx[s_idx]] = 1.0
+        # Include the boundary interval across all leading batch dimensions.
+        boundary_intervals = torch.arange(
+            basis.shape[-1], device=x.device
+        ) == self._boundary_interval_idx.unsqueeze(-1)
+        basis = torch.where(
+            at_rightmost_boundary.unsqueeze(-1) & boundary_intervals,
+            torch.ones_like(basis),
+            basis,
+        )
 
         # If returning the whole collection, initialize list
         if collection:
@@ -383,14 +389,15 @@ class VectorizedSpline(torch.nn.Module):
         Forward pass for the :class:`VectorizedSpline` model. Each univariate
         spline is evaluated independently on its corresponding input feature.
 
-        The input is expected to have shape ``[batch, s]``, where ``s`` is the
-        number of univariate splines. The output has shape ``[batch, s, o]``,
-        where ``o`` is the output dimension of each univariate spline, unless an
-        aggregation method is specified. If both ``s`` and ``o`` are 1, the
-        output is aggregated across the last dimension, resulting in an output
-        of shape ``[batch, s]``. If ``aggregate_output`` is set to ``"mean"`` or
-        ``"sum"``, the output is aggregated across the last dimension, resulting
-        in an output of shape ``[batch, s]``.
+        The input is expected to have shape ``[..., batch, s]``, where ``s`` is
+        the number of univariate splines. The output has shape
+        ``[..., batch, s, o]``, where ``o`` is the output dimension of each
+        univariate spline, unless an aggregation method is specified. If both
+        ``s`` and ``o`` are 1, the output is aggregated across the last
+        dimension, resulting in an output of shape ``[..., batch, s]``.
+        If ``aggregate_output`` is set to ``"mean"`` or ``"sum"``, the output is
+        aggregated across the last dimension, resulting in an output of shape
+        ``[..., batch, s]``.
 
         :param x: The input tensor.
         :type x: torch.Tensor | LabelTensor
@@ -401,14 +408,14 @@ class VectorizedSpline(torch.nn.Module):
         basis = self.basis(x)
 
         # Compute the output for each spline
-        out = torch.einsum("bsc,soc->bso", basis, self.control_points)
+        out = torch.einsum("...sc,soc->...so", basis, self.control_points)
 
         # Aggregate output if needed
         if self.aggregate_output == "mean":
             out = out.mean(dim=-1)
         elif self.aggregate_output == "sum":
             out = out.sum(dim=-1)
-        elif out.shape[1] == 1 and out.shape[2] == 1:
+        elif out.shape[-2] == 1 and out.shape[-1] == 1:
             out = out.squeeze(-1)
 
         return out
@@ -418,13 +425,13 @@ class VectorizedSpline(torch.nn.Module):
         Compute the ``degree``-th derivative of each univariate spline at the
         given input points.
 
-        The output has shape ``[batch, s, o]``, where ``o`` is the output
+        The output has shape ``[..., batch, s, o]``, where ``o`` is the output
         dimension of each univariate spline, unless an aggregation method is
         specified. If both ``s`` and ``o`` are 1, the output is aggregated
         across the last dimension, resulting in an output of shape
-        ``[batch, s]``. If ``aggregate_output`` is set to ``"mean"`` or
+        ``[..., batch, s]``. If ``aggregate_output`` is set to ``"mean"`` or
         ``"sum"``, the output is aggregated across the last dimension, resulting
-        in an output of shape ``[batch, s]``.
+        in an output of shape ``[..., batch, s]``.
 
         :param x: The input tensor.
         :type x: torch.Tensor | LabelTensor
@@ -439,14 +446,14 @@ class VectorizedSpline(torch.nn.Module):
         der = self._basis_derivative(x.as_subclass(torch.Tensor), degree=degree)
 
         # Compute the output for each spline
-        out = torch.einsum("bsc,soc->bso", der, self.control_points)
+        out = torch.einsum("...sc,soc->...so", der, self.control_points)
 
         # Aggregate output if needed
         if self.aggregate_output == "mean":
             out = out.mean(dim=-1)
         elif self.aggregate_output == "sum":
             out = out.sum(dim=-1)
-        elif out.shape[1] == 1 and out.shape[2] == 1:
+        elif out.shape[-2] == 1 and out.shape[-1] == 1:
             out = out.squeeze(-1)
 
         return out
@@ -481,7 +488,7 @@ class VectorizedSpline(torch.nn.Module):
                 left_fac = getattr(self, f"_left_factor_order_{o}")
                 right_fac = getattr(self, f"_right_factor_order_{o}")
 
-                # derivatives[o - 1] has shape [b, s, m]
+                # derivatives[o - 1] has shape [..., batch, s, m]
                 # Slice previous derivatives to align
                 left_part = derivatives[o - 1][..., :-1]
                 right_part = derivatives[o - 1][..., 1:]
